@@ -35,8 +35,8 @@ For more information about the dataset, visit: [CICIDS2017 Dataset](https://www.
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/ML-IDS.git
-   cd ML-IDS
+   git clone https://github.com/tks98/ml-ids.git
+   cd ml-ids
    ```
 
 2. Install the required packages:
@@ -46,7 +46,7 @@ For more information about the dataset, visit: [CICIDS2017 Dataset](https://www.
 
 ## Usage
 
-1. Download the CICIDS2017 dataset and place the CSV files in the `data/MachineLearningCVE` directory.
+1. Download the [CICIDS2017 dataset](http://205.174.165.80/CICDataset/CIC-IDS-2017/) and place the MachineLearningCVE CSV files in the `data/MachineLearningCVE` directory.
 
 2. Run the main script:
    ```
