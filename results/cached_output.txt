@@ -1,0 +1,99 @@
+python3 main.py
+2024-09-20 14:52:49,670 - INFO - TensorFlow version: 2.13.0-rc1
+2024-09-20 14:52:49,670 - INFO - GPU Available: [PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]
+2024-09-20 14:52:49,670 - INFO - Loading data from cache...
+Unique attack types in the dataset:
+['BENIGN' 'DoS Hulk' 'PortScan' 'DDoS' 'DoS GoldenEye' 'SSHPatator'
+ 'DoS slowloris' 'FTPPatator' 'DoS Slowhttptest' 'Web Attack � XSS' 'Bot'
+ 'Web Attack � Brute Force' 'Heartbleed' 'Infiltration'
+ 'Web Attack � Sql Injection']
+2024-09-20 14:52:52,288 - INFO - Starting Random Forest model training and evaluation process...
+2024-09-20 14:52:52,288 - INFO - Loading model from cache...
+2024-09-20 14:52:55,780 - INFO - Making predictions on test set...
+2024-09-20 14:52:56,236 - INFO - Calculating classification report for Random Forest...
+
+Random Forest Classification Report:
+                          precision    recall  f1-score   support
+
+                  BENIGN       1.00      1.00      1.00    227015
+                     Bot       0.67      0.94      0.78       194
+                    DDoS       1.00      1.00      1.00     12833
+           DoS GoldenEye       0.99      1.00      1.00      1026
+                DoS Hulk       1.00      1.00      1.00     23082
+        DoS Slowhttptest       0.99      0.99      0.99       555
+           DoS slowloris       0.99      1.00      0.99       585
+              FTPPatator       1.00      1.00      1.00       793
+            Infiltration       1.00      1.00      1.00         3
+                PortScan       0.99      1.00      1.00     15905
+              SSHPatator       1.00      0.99      1.00       582
+Web Attack � Brute Force       0.66      0.68      0.67       155
+        Web Attack � XSS       0.36      0.53      0.43        64
+
+                accuracy                           1.00    282792
+               macro avg       0.90      0.93      0.91    282792
+            weighted avg       1.00      1.00      1.00    282792
+
+2024-09-20 14:53:01,252 - INFO - Random Forest model evaluation completed.
+2024-09-20 14:53:05,014 - INFO - Too many classes (13). Limiting to top 10 most frequent.
+2024-09-20 14:53:05,600 - INFO - Random Forest Confusion Matrix saved as 'results/confusion_matrix_rf.png'
+2024-09-20 14:53:05,601 - INFO - Random Forest confusion matrix saved as 'results/confusion_matrix_rf.png'
+2024-09-20 14:53:05,916 - INFO - Feature importance plot saved as 'results/feature_importance.png'
+2024-09-20 14:53:05,916 - INFO - Starting Isolation Forest training and evaluation process...
+2024-09-20 14:53:05,916 - INFO - Loading Isolation Forest model from cache...
+2024-09-20 14:53:07,150 - INFO - Predicting anomalies on test set...
+2024-09-20 14:53:08,518 - INFO - Anomalies saved to results/isolation_forest_anomalies.csv
+2024-09-20 14:53:08,518 - INFO - Calculating classification report for Isolation Forest...
+
+Isolation Forest Classification Report:
+              precision    recall  f1-score   support
+
+      ATTACK       0.58      0.45      0.51     55777
+      BENIGN       0.87      0.92      0.90    227015
+
+    accuracy                           0.83    282792
+   macro avg       0.73      0.69      0.70    282792
+weighted avg       0.81      0.83      0.82    282792
+
+2024-09-20 14:53:10,035 - INFO - Isolation Forest evaluation completed.
+2024-09-20 14:53:11,464 - INFO - Isolation Forest Confusion Matrix saved as 'results/confusion_matrix_if.png'
+2024-09-20 14:53:11,464 - INFO - Isolation Forest confusion matrix saved as 'results/confusion_matrix_if.png'
+2024-09-20 14:53:11,464 - INFO - Starting Neural Network training and evaluation process...
+2024-09-20 14:53:11,464 - INFO - Loading Neural Network model from cache...
+2024-09-20 14:53:11.472574: I metal_plugin/src/device/metal_device.cc:1154] Metal device set to: Apple M1 Max
+2024-09-20 14:53:11.472606: I metal_plugin/src/device/metal_device.cc:296] systemMemory: 32.00 GB
+2024-09-20 14:53:11.472610: I metal_plugin/src/device/metal_device.cc:313] maxCacheSize: 10.67 GB
+2024-09-20 14:53:11.472638: I tensorflow/core/common_runtime/pluggable_device/pluggable_device_factory.cc:303] Could not identify NUMA node of platform GPU ID 0, defaulting to 0. Your kernel may not have been built with NUMA support.
+2024-09-20 14:53:11.472653: I tensorflow/core/common_runtime/pluggable_device/pluggable_device_factory.cc:269] Created TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 0 MB memory) -> physical PluggableDevice (device: 0, name: METAL, pci bus id: <undefined>)
+2024-09-20 14:53:12,427 - INFO - Evaluating Neural Network model on test set...
+2024-09-20 14:53:12.612737: I tensorflow/core/grappler/optimizers/custom_graph_optimizer_registry.cc:114] Plugin optimizer for device_type GPU is enabled.
+8838/8838 [==============================] - 21s 2ms/step
+2024-09-20 14:53:38,000 - INFO - Calculating classification report for Neural Network...
+
+Neural Network Classification Report:
+                          precision    recall  f1-score   support
+
+                  BENIGN       1.00      0.95      0.97    227015
+                     Bot       0.04      1.00      0.08       194
+                    DDoS       0.94      1.00      0.97     12833
+           DoS GoldenEye       0.75      1.00      0.86      1026
+                DoS Hulk       0.94      1.00      0.97     23082
+        DoS Slowhttptest       0.81      0.99      0.89       555
+           DoS slowloris       0.75      0.99      0.86       585
+              FTPPatator       0.87      0.99      0.93       793
+            Infiltration       0.08      1.00      0.15         3
+                PortScan       0.82      1.00      0.90     15905
+              SSHPatator       0.58      0.99      0.74       582
+Web Attack � Brute Force       1.00      0.00      0.00       155
+        Web Attack � XSS       1.00      0.00      0.00        64
+
+                accuracy                           0.96    282792
+               macro avg       0.74      0.84      0.64    282792
+            weighted avg       0.98      0.96      0.97    282792
+
+2024-09-20 14:53:42,146 - INFO - Neural Network model evaluation completed.
+2024-09-20 14:53:45,244 - INFO - Too many classes (13). Limiting to top 10 most frequent.
+2024-09-20 14:53:45,660 - INFO - Neural Network Confusion Matrix saved as 'results/confusion_matrix_nn.png'
+2024-09-20 14:53:45,661 - INFO - Neural Network confusion matrix saved as 'results/confusion_matrix_nn.png'
+2024-09-20 14:53:46,006 - INFO - Overall performance report saved as 'results/overall_performance_report.png'
+2024-09-20 14:53:46,006 - INFO - Process completed!
+2024-09-20 14:53:46,006 - INFO - Script execution finished.

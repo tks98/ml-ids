@@ -1,6 +1,7 @@
 data
 full_dataset_cache.pkl
 ml-ids/
+model_cache
 *.joblib
 *.pkl
 *.h5

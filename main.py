@@ -66,7 +66,7 @@ def load_all_csv_files(directory):
     return combined_df
 
 # Function to load and preprocess the data, using caching for efficiency
-def load_and_preprocess_data(directory, cache_file='full_dataset_cache.pkl'):
+def load_and_preprocess_data(directory, cache_file='model_cache/full_dataset_cache.pkl'):
     # Check if processed data is already cached
     if os.path.exists(cache_file):
         logging.info("Loading data from cache...")
@@ -129,7 +129,7 @@ def prepare_features_and_target(df, sample_size=0.5, min_samples=10):
     return X, y, y_encoded, label_encoder
 
 # Function to train and evaluate the Random Forest model
-def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'):
+def train_and_evaluate_model(X, y, model_cache_file='model_cache/trained_model_cache.joblib'):
     logging.info("Starting Random Forest model training and evaluation process...")
     
     # Check if a cached model exists
@@ -196,7 +196,7 @@ def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'
     return pipeline, X_test, y_test, y_pred, [accuracy, precision, recall, f1]
 
 # Function to train and evaluate the Isolation Forest model
-def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest_model_cache.joblib'):
+def train_and_evaluate_isolation_forest(X, y, model_cache_file='model_cache/isolation_forest_model_cache.joblib'):
     logging.info("Starting Isolation Forest training and evaluation process...")
     
     # Check if a cached model exists
@@ -241,6 +241,21 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest
     # Map actual labels to 'BENIGN' and 'ATTACK'
     y_test_mapped = np.where(y_test == 'BENIGN', 'BENIGN', 'ATTACK')
     
+    # Create a DataFrame with the results
+    results_df = pd.DataFrame({
+        'Actual': y_test,
+        'Predicted': y_pred_mapped,
+        'Anomaly_Score': y_pred_scores
+    })
+    
+    # Sort by anomaly score (ascending) to get the most anomalous instances first
+    results_df = results_df.sort_values('Anomaly_Score')
+    
+    # Save the anomalies to a CSV file
+    anomalies_file = 'results/isolation_forest_anomalies.csv'
+    results_df[results_df['Predicted'] == 'ATTACK'].to_csv(anomalies_file, index=False)
+    logging.info(f"Anomalies saved to {anomalies_file}")
+    
     # Generate a classification report
     logging.info("Calculating classification report for Isolation Forest...")
     report = classification_report(y_test_mapped, y_pred_mapped, zero_division=1)
@@ -258,7 +273,7 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest
     return isolation_forest, X_test, y_test_mapped, y_pred_mapped, [accuracy, precision, recall, f1]
 
 # Function to train and evaluate the Neural Network model
-def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_file='neural_network_model_cache.h5'):
+def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_file='model_cache/neural_network_model_cache.h5'):
     logging.info("Starting Neural Network training and evaluation process...")
     
     # Check if a cached model exists
@@ -325,7 +340,7 @@ def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_f
         model.save(model_cache_file)
         
         # Save the scaler
-        with open('scaler_nn.pkl', 'wb') as f:
+        with open('model_cache/scaler_nn.pkl', 'wb') as f:
             pickle.dump(scaler, f)
             
     # Evaluate the model on the test set
@@ -333,7 +348,7 @@ def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_f
     # Normalize features
     if 'scaler' not in locals():
         # Load scaler from cache or recompute
-        with open('scaler_nn.pkl', 'rb') as f:
+        with open('model_cache/scaler_nn.pkl', 'rb') as f:
             scaler = pickle.load(f)
         X_test = scaler.transform(X_test)
     
@@ -361,7 +376,7 @@ def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_f
     return model, X_test, y_test, y_pred, [accuracy, precision, recall, f1]
 
 # Function to plot a confusion matrix of model predictions
-def plot_confusion_matrix(y_test, y_pred, top_n=10, title='Confusion Matrix', filename='confusion_matrix.png'):
+def plot_confusion_matrix(y_test, y_pred, top_n=10, title='Confusion Matrix', filename='results/confusion_matrix.png'):
     unique_labels = np.unique(np.concatenate((y_test, y_pred)))
     
     if len(unique_labels) > top_n:
@@ -403,10 +418,10 @@ def plot_feature_importance(pipeline, X):
     plt.ylabel('Importance')
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig('feature_importance.png')
+    plt.savefig('results/feature_importance.png')
     plt.close()
     
-    logging.info("Feature importance plot saved as 'feature_importance.png'")
+    logging.info("Feature importance plot saved as 'results/feature_importance.png'")
 
 # Function to create an overall performance report
 def create_overall_performance_report(rf_results, if_results, nn_results):
@@ -429,14 +444,18 @@ def create_overall_performance_report(rf_results, if_results, nn_results):
     plt.ylabel('Score', fontsize=12)
     plt.ylim(0, 1)
     plt.legend(title='Model', title_fontsize='12', fontsize='10')
-    plt.savefig('overall_performance_report.png', dpi=300, bbox_inches='tight')
+    plt.savefig('results/overall_performance_report.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    logging.info("Overall performance report saved as 'overall_performance_report.png'")
+    logging.info("Overall performance report saved as 'results/overall_performance_report.png'")
 
 # Main function to orchestrate the entire process
 def main():
     try:
+        # Create directories if they don't exist
+        os.makedirs('model_cache', exist_ok=True)
+        os.makedirs('results', exist_ok=True)
+
         # Specify the directory containing the data files
         directory = 'data/MachineLearningCVE'
         # Load and preprocess the data
@@ -449,8 +468,8 @@ def main():
         pipeline, X_test_rf, y_test_rf, y_pred_rf, rf_metrics = train_and_evaluate_model(X, y)
         
         # Generate and save visualizations for Random Forest
-        plot_confusion_matrix(y_test_rf, y_pred_rf, title='Random Forest Confusion Matrix', filename='confusion_matrix_rf.png')
-        logging.info("Random Forest confusion matrix saved as 'confusion_matrix_rf.png'")
+        plot_confusion_matrix(y_test_rf, y_pred_rf, title='Random Forest Confusion Matrix', filename='results/confusion_matrix_rf.png')
+        logging.info("Random Forest confusion matrix saved as 'results/confusion_matrix_rf.png'")
         
         plot_feature_importance(pipeline, X)
         
@@ -458,15 +477,15 @@ def main():
         isolation_forest, X_test_if, y_test_if, y_pred_if, if_metrics = train_and_evaluate_isolation_forest(X, y)
         
         # Generate and save visualizations for Isolation Forest
-        plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', filename='confusion_matrix_if.png')
-        logging.info("Isolation Forest confusion matrix saved as 'confusion_matrix_if.png'")
+        plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', filename='results/confusion_matrix_if.png')
+        logging.info("Isolation Forest confusion matrix saved as 'results/confusion_matrix_if.png'")
         
         # Train and evaluate the Neural Network model
         model_nn, X_test_nn, y_test_nn, y_pred_nn, nn_metrics = train_and_evaluate_neural_network(X, y_encoded, label_encoder)
         
         # Generate and save visualizations for Neural Network
-        plot_confusion_matrix(y_test_nn, y_pred_nn, title='Neural Network Confusion Matrix', filename='confusion_matrix_nn.png')
-        logging.info("Neural Network confusion matrix saved as 'confusion_matrix_nn.png'")
+        plot_confusion_matrix(y_test_nn, y_pred_nn, title='Neural Network Confusion Matrix', filename='results/confusion_matrix_nn.png')
+        logging.info("Neural Network confusion matrix saved as 'results/confusion_matrix_nn.png'")
         
         # Create and save the overall performance report
         create_overall_performance_report(rf_metrics, if_metrics, nn_metrics)
