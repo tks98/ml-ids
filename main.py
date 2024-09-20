@@ -6,7 +6,7 @@ import pickle
 import time
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as plt
@@ -173,6 +173,15 @@ def train_and_evaluate_model(X, y):
     # Remove any classes from sampling_strategy that are not in the dataset
     sampling_strategy = {k: v for k, v in sampling_strategy.items() if k in class_counts}
     
+    # Add Isolation Forest for anomaly detection
+    logging.info("Training Isolation Forest for anomaly detection...")
+    iso_forest = IsolationForest(contamination=0.1, random_state=42, n_jobs=-1)
+    anomaly_labels = iso_forest.fit_predict(X)
+    
+    # Identify anomalies
+    anomalies = X[anomaly_labels == -1]
+    logging.info(f"Number of anomalies detected: {len(anomalies)}")
+
     # Create a pipeline that scales the data, applies aggressive SMOTE, and then uses a Random Forest classifier
     pipeline = ImbPipeline([
         ('scaler', StandardScaler()),
@@ -204,7 +213,7 @@ def train_and_evaluate_model(X, y):
     
     logging.info("Model evaluation completed.")
     
-    return pipeline, X_test, y_test, y_pred
+    return pipeline, X_test, y_test, y_pred, anomalies
 
 # Function to plot a confusion matrix of model predictions
 def plot_confusion_matrix(y_test, y_pred, top_n=10):
@@ -262,7 +271,7 @@ def main():
         X, y = prepare_features_and_target(full_dataset)
         
         # Train and evaluate the model
-        pipeline, X_test, y_test, y_pred = train_and_evaluate_model(X, y)
+        pipeline, X_test, y_test, y_pred, anomalies = train_and_evaluate_model(X, y)
         
         # Generate and save visualizations
         plot_confusion_matrix(y_test, y_pred)
@@ -271,6 +280,10 @@ def main():
         plot_feature_importance(pipeline, X)
         logging.info("Feature importance plot saved as 'feature_importance.png'")
         
+        # Save anomalies to a CSV file
+        anomalies.to_csv('anomalies.csv', index=False)
+        logging.info("Anomalies saved to 'anomalies.csv'")
+
         logging.info("Process completed!")
     
     except Exception as e:
