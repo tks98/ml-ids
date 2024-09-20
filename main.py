@@ -7,7 +7,7 @@ import time
 import joblib
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as plt
@@ -46,10 +46,10 @@ def load_all_csv_files(directory):
             # Add a column to identify the source file
             df['source_file'] = filename
             
+            print(f"Loaded: {filename}")
+        
             # Append to the list of DataFrames
             dataframes.append(df)
-            
-            print(f"Loaded: {filename}")
     
     # Combine all DataFrames into a single DataFrame
     combined_df = pd.concat(dataframes, ignore_index=True)
@@ -115,9 +115,9 @@ def prepare_features_and_target(df, sample_size=0.5, min_samples=10):
     
     return X, y
 
-# Function to train and evaluate the machine learning model
+# Function to train and evaluate the Random Forest model
 def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'):
-    logging.info("Starting model training and evaluation process...")
+    logging.info("Starting Random Forest model training and evaluation process...")
     
     # Check if a cached model exists
     if os.path.exists(model_cache_file):
@@ -144,14 +144,14 @@ def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'
         ])
         
         # Train the model
-        logging.info("Training model...")
+        logging.info("Training Random Forest model...")
         start_time = time.time()
         pipeline.fit(X_train, y_train)
         end_time = time.time()
         logging.info(f"Training completed in {end_time - start_time:.2f} seconds")
         
         # Cache the trained model
-        logging.info("Saving model to cache...")
+        logging.info("Saving Random Forest model to cache...")
         joblib.dump(pipeline, model_cache_file)
         
         # Calculate class distribution after SMOTE
@@ -167,17 +167,73 @@ def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'
     y_pred = pipeline.predict(X_test)
     
     # Generate a classification report
-    logging.info("Calculating classification report...")
+    logging.info("Calculating classification report for Random Forest...")
     report = classification_report(y_test, y_pred, zero_division=1)
-    print("\nClassification Report:")
+    print("\nRandom Forest Classification Report:")
     print(report)
     
-    logging.info("Model evaluation completed.")
+    logging.info("Random Forest model evaluation completed.")
     
     return pipeline, X_test, y_test, y_pred
 
+# Function to train and evaluate the Isolation Forest model
+def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest_model_cache.joblib'):
+    logging.info("Starting Isolation Forest training and evaluation process...")
+    
+    # Check if a cached model exists
+    if os.path.exists(model_cache_file):
+        logging.info("Loading Isolation Forest model from cache...")
+        isolation_forest = joblib.load(model_cache_file)
+        
+        # Split data into training and testing sets
+        _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    else:
+        # Split data into training and testing sets
+        X_train_full, X_test, y_train_full, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        
+        # From the training data, select only BENIGN samples to train the Isolation Forest
+        X_train = X_train_full[y_train_full == 'BENIGN']
+        logging.info(f"Training Isolation Forest on normal data. Training samples: {X_train.shape[0]}")
+        
+        # Initialize the Isolation Forest model
+        isolation_forest = IsolationForest(n_estimators=100, contamination='auto', random_state=42, n_jobs=-1)
+        
+        # Train the model
+        logging.info("Training Isolation Forest...")
+        start_time = time.time()
+        isolation_forest.fit(X_train)
+        end_time = time.time()
+        logging.info(f"Isolation Forest training completed in {end_time - start_time:.2f} seconds")
+        
+        # Save the model to cache
+        logging.info("Saving Isolation Forest model to cache...")
+        joblib.dump(isolation_forest, model_cache_file)
+        
+    # Use the trained model to predict anomalies on the test set
+    logging.info("Predicting anomalies on test set...")
+    y_pred_scores = isolation_forest.decision_function(X_test)
+    y_pred = isolation_forest.predict(X_test)
+    
+    # Map the Isolation Forest output to labels
+    # Isolation Forest outputs 1 for normal, -1 for anomalies
+    # Let's map 1 to 'BENIGN', -1 to 'ATTACK'
+    y_pred_mapped = np.where(y_pred == 1, 'BENIGN', 'ATTACK')
+    
+    # Map actual labels to 'BENIGN' and 'ATTACK'
+    y_test_mapped = np.where(y_test == 'BENIGN', 'BENIGN', 'ATTACK')
+    
+    # Generate a classification report
+    logging.info("Calculating classification report for Isolation Forest...")
+    report = classification_report(y_test_mapped, y_pred_mapped, zero_division=1)
+    print("\nIsolation Forest Classification Report:")
+    print(report)
+    
+    logging.info("Isolation Forest evaluation completed.")
+    
+    return isolation_forest, X_test, y_test_mapped, y_pred_mapped
+
 # Function to plot a confusion matrix of model predictions
-def plot_confusion_matrix(y_test, y_pred, top_n=10):
+def plot_confusion_matrix(y_test, y_pred, top_n=10, title='Confusion Matrix', filename='confusion_matrix.png'):
     unique_labels = np.unique(np.concatenate((y_test, y_pred)))
     
     if len(unique_labels) > top_n:
@@ -195,13 +251,12 @@ def plot_confusion_matrix(y_test, y_pred, top_n=10):
     plt.figure(figsize=(12, 10))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                 xticklabels=top_labels, yticklabels=top_labels)
-    plt.title('Confusion Matrix')
+    plt.title(title)
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
-    plt.savefig('confusion_matrix.png')
+    plt.savefig(filename)
     plt.close()
-
-    logging.info("Confusion matrix saved as 'confusion_matrix.png'")
+    logging.info(f"{title} saved as '{filename}'")
 
 # Function to plot feature importance from the Random Forest model
 def plot_feature_importance(pipeline, X):
@@ -236,15 +291,21 @@ def main():
         # Prepare features and target for machine learning
         X, y = prepare_features_and_target(full_dataset, sample_size=0.5)
         
-        # Train and evaluate the model
-        pipeline, X_test, y_test, y_pred = train_and_evaluate_model(X, y)
+        # Train and evaluate the Random Forest model
+        pipeline, X_test_rf, y_test_rf, y_pred_rf = train_and_evaluate_model(X, y)
         
-        # Generate and save visualizations
-        plot_confusion_matrix(y_test, y_pred)
-        logging.info("Confusion matrix saved as 'confusion_matrix.png'")
+        # Generate and save visualizations for Random Forest
+        plot_confusion_matrix(y_test_rf, y_pred_rf, title='Random Forest Confusion Matrix', filename='confusion_matrix_rf.png')
+        logging.info("Random Forest confusion matrix saved as 'confusion_matrix_rf.png'")
         
         plot_feature_importance(pipeline, X)
-        logging.info("Feature importance plot saved as 'feature_importance.png'")
+        
+        # Train and evaluate the Isolation Forest model
+        isolation_forest, X_test_if, y_test_if, y_pred_if = train_and_evaluate_isolation_forest(X, y)
+        
+        # Generate and save visualizations for Isolation Forest
+        plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', filename='confusion_matrix_if.png')
+        logging.info("Isolation Forest confusion matrix saved as 'confusion_matrix_if.png'")
         
         logging.info("Process completed!")
     
