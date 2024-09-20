@@ -3,3 +3,4 @@ full_dataset_cache.pkl
 ml-ids/
 *.joblib
 *.pkl
+*.h5

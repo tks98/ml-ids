@@ -19,8 +19,10 @@ from sklearn.feature_selection import SelectFromModel
 from collections import Counter
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.optimizers.legacy import Adam
+from tensorflow.keras.layers import LeakyReLU
 
 # Set up logging to track the progress and any issues
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -276,28 +278,45 @@ def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_f
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
         
-        # Calculate class weights to handle imbalance
-        class_weights = compute_class_weight('balanced', classes=np.unique(y_train_encoded), y=y_train_encoded)
-        class_weights_dict = dict(zip(np.unique(y_train_encoded), class_weights))
+        # Apply SMOTE to balance the classes
+        smote = SMOTE(sampling_strategy='auto', random_state=42, n_jobs=-1)
+        X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train_encoded)
+        logging.info(f"Class distribution after SMOTE: {Counter(y_train_resampled)}")
+        
+        # Recalculate class weights after SMOTE
+        class_weights = compute_class_weight('balanced', classes=np.unique(y_train_resampled), y=y_train_resampled)
+        class_weights_dict = dict(zip(np.unique(y_train_resampled), class_weights))
         
         # Build the neural network model
         model = Sequential()
-        model.add(Dense(128, input_dim=X_train.shape[1], activation='relu'))
+        model.add(Dense(256, input_dim=X_train_resampled.shape[1]))
+        model.add(BatchNormalization())
+        model.add(LeakyReLU(alpha=0.1))
         model.add(Dropout(0.5))
-        model.add(Dense(64, activation='relu'))
+        
+        model.add(Dense(128))
+        model.add(BatchNormalization())
+        model.add(LeakyReLU(alpha=0.1))
         model.add(Dropout(0.5))
+        
+        model.add(Dense(64))
+        model.add(BatchNormalization())
+        model.add(LeakyReLU(alpha=0.1))
+        model.add(Dropout(0.5))
+        
         model.add(Dense(len(label_encoder.classes_), activation='softmax'))
         
         # Compile the model
-        model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+        optimizer = Adam(learning_rate=0.0001)
+        model.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
         
         # Early stopping to prevent overfitting
-        early_stopping = EarlyStopping(monitor='val_loss', patience=3)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
         
         # Train the model
         logging.info("Training Neural Network model...")
         start_time = time.time()
-        model.fit(X_train, y_train_encoded, validation_split=0.2, epochs=20, batch_size=256, class_weight=class_weights_dict, callbacks=[early_stopping])
+        model.fit(X_train_resampled, y_train_resampled, validation_split=0.2, epochs=50, batch_size=128, class_weight=class_weights_dict, callbacks=[early_stopping])
         end_time = time.time()
         logging.info(f"Training completed in {end_time - start_time:.2f} seconds")
         
@@ -308,7 +327,7 @@ def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_f
         # Save the scaler
         with open('scaler_nn.pkl', 'wb') as f:
             pickle.dump(scaler, f)
-        
+            
     # Evaluate the model on the test set
     logging.info("Evaluating Neural Network model on test set...")
     # Normalize features
