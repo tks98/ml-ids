@@ -5,20 +5,27 @@ import logging
 import pickle
 import time
 import joblib
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 from sklearn.pipeline import Pipeline
+from sklearn.utils.class_weight import compute_class_weight
 import matplotlib.pyplot as plt
 import seaborn as sns
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.feature_selection import SelectFromModel
 from collections import Counter
+import tensorflow as tf
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
 
 # Set up logging to track the progress and any issues
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.info(f"TensorFlow version: {tf.__version__}")
+logging.info(f"GPU Available: {tf.config.list_physical_devices('GPU')}")
 
 # Function to load all CSV files from a directory into a single DataFrame
 def load_all_csv_files(directory):
@@ -113,7 +120,11 @@ def prepare_features_and_target(df, sample_size=0.5, min_samples=10):
     # Ensure y matches the rows in X after dropping NaN values
     y = y.loc[X.index]
     
-    return X, y
+    # Encode labels to integers
+    label_encoder = LabelEncoder()
+    y_encoded = label_encoder.fit_transform(y)
+    
+    return X, y, y_encoded, label_encoder
 
 # Function to train and evaluate the Random Forest model
 def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'):
@@ -244,6 +255,92 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest
     
     return isolation_forest, X_test, y_test_mapped, y_pred_mapped, [accuracy, precision, recall, f1]
 
+# Function to train and evaluate the Neural Network model
+def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_file='neural_network_model_cache.h5'):
+    logging.info("Starting Neural Network training and evaluation process...")
+    
+    # Check if a cached model exists
+    if os.path.exists(model_cache_file):
+        logging.info("Loading Neural Network model from cache...")
+        model = load_model(model_cache_file)
+        
+        # Split data into training and testing sets
+        _, X_test, _, y_test_encoded = train_test_split(X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded)
+    else:
+        # Split data into training and testing sets
+        X_train, X_test, y_train_encoded, y_test_encoded = train_test_split(X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded)
+        logging.info(f"Train set size: {X_train.shape[0]}, Test set size: {X_test.shape[0]}")
+        
+        # Normalize features
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        
+        # Calculate class weights to handle imbalance
+        class_weights = compute_class_weight('balanced', classes=np.unique(y_train_encoded), y=y_train_encoded)
+        class_weights_dict = dict(zip(np.unique(y_train_encoded), class_weights))
+        
+        # Build the neural network model
+        model = Sequential()
+        model.add(Dense(128, input_dim=X_train.shape[1], activation='relu'))
+        model.add(Dropout(0.5))
+        model.add(Dense(64, activation='relu'))
+        model.add(Dropout(0.5))
+        model.add(Dense(len(label_encoder.classes_), activation='softmax'))
+        
+        # Compile the model
+        model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+        
+        # Early stopping to prevent overfitting
+        early_stopping = EarlyStopping(monitor='val_loss', patience=3)
+        
+        # Train the model
+        logging.info("Training Neural Network model...")
+        start_time = time.time()
+        model.fit(X_train, y_train_encoded, validation_split=0.2, epochs=20, batch_size=256, class_weight=class_weights_dict, callbacks=[early_stopping])
+        end_time = time.time()
+        logging.info(f"Training completed in {end_time - start_time:.2f} seconds")
+        
+        # Save the model to cache
+        logging.info("Saving Neural Network model to cache...")
+        model.save(model_cache_file)
+        
+        # Save the scaler
+        with open('scaler_nn.pkl', 'wb') as f:
+            pickle.dump(scaler, f)
+        
+    # Evaluate the model on the test set
+    logging.info("Evaluating Neural Network model on test set...")
+    # Normalize features
+    if 'scaler' not in locals():
+        # Load scaler from cache or recompute
+        with open('scaler_nn.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+        X_test = scaler.transform(X_test)
+    
+    y_pred_prob = model.predict(X_test)
+    y_pred_encoded = np.argmax(y_pred_prob, axis=1)
+    
+    # Map labels back to original labels
+    y_test = label_encoder.inverse_transform(y_test_encoded)
+    y_pred = label_encoder.inverse_transform(y_pred_encoded)
+    
+    # Generate a classification report
+    logging.info("Calculating classification report for Neural Network...")
+    report = classification_report(y_test, y_pred, zero_division=1)
+    print("\nNeural Network Classification Report:")
+    print(report)
+    
+    logging.info("Neural Network model evaluation completed.")
+    
+    # Calculate performance metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='weighted', zero_division=1)
+    recall = recall_score(y_test, y_pred, average='weighted', zero_division=1)
+    f1 = f1_score(y_test, y_pred, average='weighted', zero_division=1)
+    
+    return model, X_test, y_test, y_pred, [accuracy, precision, recall, f1]
+
 # Function to plot a confusion matrix of model predictions
 def plot_confusion_matrix(y_test, y_pred, top_n=10, title='Confusion Matrix', filename='confusion_matrix.png'):
     unique_labels = np.unique(np.concatenate((y_test, y_pred)))
@@ -293,14 +390,14 @@ def plot_feature_importance(pipeline, X):
     logging.info("Feature importance plot saved as 'feature_importance.png'")
 
 # Function to create an overall performance report
-def create_overall_performance_report(rf_results, if_results):
+def create_overall_performance_report(rf_results, if_results, nn_results):
     metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
-    models = ['Random Forest', 'Isolation Forest']
+    models = ['Random Forest', 'Isolation Forest', 'Neural Network']
     
     data = {
-        'Metric': metrics * 2,
-        'Score': rf_results + if_results,
-        'Model': [models[0]] * 4 + [models[1]] * 4
+        'Metric': metrics * 3,
+        'Score': rf_results + if_results + nn_results,
+        'Model': [models[0]] * 4 + [models[1]] * 4 + [models[2]] * 4
     }
     
     df = pd.DataFrame(data)
@@ -327,7 +424,7 @@ def main():
         full_dataset = load_and_preprocess_data(directory)
         
         # Prepare features and target for machine learning
-        X, y = prepare_features_and_target(full_dataset, sample_size=0.5)
+        X, y, y_encoded, label_encoder = prepare_features_and_target(full_dataset, sample_size=0.5)
         
         # Train and evaluate the Random Forest model
         pipeline, X_test_rf, y_test_rf, y_pred_rf, rf_metrics = train_and_evaluate_model(X, y)
@@ -345,8 +442,15 @@ def main():
         plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', filename='confusion_matrix_if.png')
         logging.info("Isolation Forest confusion matrix saved as 'confusion_matrix_if.png'")
         
+        # Train and evaluate the Neural Network model
+        model_nn, X_test_nn, y_test_nn, y_pred_nn, nn_metrics = train_and_evaluate_neural_network(X, y_encoded, label_encoder)
+        
+        # Generate and save visualizations for Neural Network
+        plot_confusion_matrix(y_test_nn, y_pred_nn, title='Neural Network Confusion Matrix', filename='confusion_matrix_nn.png')
+        logging.info("Neural Network confusion matrix saved as 'confusion_matrix_nn.png'")
+        
         # Create and save the overall performance report
-        create_overall_performance_report(rf_metrics, if_metrics)
+        create_overall_performance_report(rf_metrics, if_metrics, nn_metrics)
         
         logging.info("Process completed!")
     
