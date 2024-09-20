@@ -4,6 +4,12 @@
 
 ML-IDS is a machine learning-based intrusion detection system that utilizes the CICIDS2017 dataset for training and evaluation. This project implements three different machine learning models: Random Forest, Isolation Forest, and Neural Network, to detect various types of network intrusions and cyber attacks.
 
+## Performance Overview
+
+![Overall Performance Report](results/overall_performance_report.png)
+
+The above graph shows the performance comparison of the three implemented models across different metrics.
+
 ## Dataset
 
 This project uses the CICIDS2017 dataset, which is a comprehensive intrusion detection dataset created by the Canadian Institute for Cybersecurity (CIC) at the University of New Brunswick (UNB). The dataset contains benign and the most up-to-date common attacks, which resembles the true real-world data (PCAPs).
