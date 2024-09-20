@@ -8,7 +8,7 @@ import joblib
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -174,7 +174,13 @@ def train_and_evaluate_model(X, y, model_cache_file='trained_model_cache.joblib'
     
     logging.info("Random Forest model evaluation completed.")
     
-    return pipeline, X_test, y_test, y_pred
+    # Calculate performance metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='weighted', zero_division=1)
+    recall = recall_score(y_test, y_pred, average='weighted', zero_division=1)
+    f1 = f1_score(y_test, y_pred, average='weighted', zero_division=1)
+    
+    return pipeline, X_test, y_test, y_pred, [accuracy, precision, recall, f1]
 
 # Function to train and evaluate the Isolation Forest model
 def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest_model_cache.joblib'):
@@ -230,7 +236,13 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='isolation_forest
     
     logging.info("Isolation Forest evaluation completed.")
     
-    return isolation_forest, X_test, y_test_mapped, y_pred_mapped
+    # Calculate performance metrics
+    accuracy = accuracy_score(y_test_mapped, y_pred_mapped)
+    precision = precision_score(y_test_mapped, y_pred_mapped, average='weighted', zero_division=1)
+    recall = recall_score(y_test_mapped, y_pred_mapped, average='weighted', zero_division=1)
+    f1 = f1_score(y_test_mapped, y_pred_mapped, average='weighted', zero_division=1)
+    
+    return isolation_forest, X_test, y_test_mapped, y_pred_mapped, [accuracy, precision, recall, f1]
 
 # Function to plot a confusion matrix of model predictions
 def plot_confusion_matrix(y_test, y_pred, top_n=10, title='Confusion Matrix', filename='confusion_matrix.png'):
@@ -280,6 +292,32 @@ def plot_feature_importance(pipeline, X):
     
     logging.info("Feature importance plot saved as 'feature_importance.png'")
 
+# Function to create an overall performance report
+def create_overall_performance_report(rf_results, if_results):
+    metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+    models = ['Random Forest', 'Isolation Forest']
+    
+    data = {
+        'Metric': metrics * 2,
+        'Score': rf_results + if_results,
+        'Model': [models[0]] * 4 + [models[1]] * 4
+    }
+    
+    df = pd.DataFrame(data)
+    
+    plt.figure(figsize=(12, 6))
+    sns.set_style("whitegrid")
+    sns.barplot(x='Metric', y='Score', hue='Model', data=df)
+    plt.title('Model Performance Comparison', fontsize=16)
+    plt.xlabel('Metric', fontsize=12)
+    plt.ylabel('Score', fontsize=12)
+    plt.ylim(0, 1)
+    plt.legend(title='Model', title_fontsize='12', fontsize='10')
+    plt.savefig('overall_performance_report.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    logging.info("Overall performance report saved as 'overall_performance_report.png'")
+
 # Main function to orchestrate the entire process
 def main():
     try:
@@ -292,7 +330,7 @@ def main():
         X, y = prepare_features_and_target(full_dataset, sample_size=0.5)
         
         # Train and evaluate the Random Forest model
-        pipeline, X_test_rf, y_test_rf, y_pred_rf = train_and_evaluate_model(X, y)
+        pipeline, X_test_rf, y_test_rf, y_pred_rf, rf_metrics = train_and_evaluate_model(X, y)
         
         # Generate and save visualizations for Random Forest
         plot_confusion_matrix(y_test_rf, y_pred_rf, title='Random Forest Confusion Matrix', filename='confusion_matrix_rf.png')
@@ -301,11 +339,14 @@ def main():
         plot_feature_importance(pipeline, X)
         
         # Train and evaluate the Isolation Forest model
-        isolation_forest, X_test_if, y_test_if, y_pred_if = train_and_evaluate_isolation_forest(X, y)
+        isolation_forest, X_test_if, y_test_if, y_pred_if, if_metrics = train_and_evaluate_isolation_forest(X, y)
         
         # Generate and save visualizations for Isolation Forest
         plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', filename='confusion_matrix_if.png')
         logging.info("Isolation Forest confusion matrix saved as 'confusion_matrix_if.png'")
+        
+        # Create and save the overall performance report
+        create_overall_performance_report(rf_metrics, if_metrics)
         
         logging.info("Process completed!")
     
