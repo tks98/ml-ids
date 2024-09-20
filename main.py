@@ -14,6 +14,8 @@ import seaborn as sns
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 from joblib import Parallel, delayed
+from sklearn.feature_selection import SelectFromModel
+from collections import Counter
 
 # Set up logging to track the progress and any issues
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -108,6 +110,10 @@ def prepare_features_and_target(df, sample_size=0.1, min_samples=10):
     label_col = df_sampled.columns[df_sampled.columns.str.strip() == 'Label'][0]
     source_file_col = df_sampled.columns[df_sampled.columns.str.strip() == 'source_file'][0]
     
+    # Print unique values in the Label column
+    print("Unique attack types in the dataset:")
+    print(df[label_col].unique())
+    
     # Remove classes with too few samples to ensure reliable learning
     class_counts = df_sampled[label_col].value_counts()
     classes_to_keep = class_counts[class_counts >= min_samples].index
@@ -125,7 +131,20 @@ def prepare_features_and_target(df, sample_size=0.1, min_samples=10):
     # Ensure y matches the rows in X after dropping NaN values
     y = y[X.index]
     
-    return X, y
+    # Add feature selection step
+    selector = SelectFromModel(RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))
+    selector.fit(X, y)
+    
+    # Get the selected feature names
+    selected_features = X.columns[selector.get_support()]
+    
+    # Apply the transformation
+    X_selected = selector.transform(X)
+    
+    # Convert X_selected back to a DataFrame with the correct feature names
+    X_selected = pd.DataFrame(X_selected, columns=selected_features, index=X.index)
+    
+    return X_selected, y
 
 # Function to train and evaluate the machine learning model
 def train_and_evaluate_model(X, y):
@@ -135,36 +154,43 @@ def train_and_evaluate_model(X, y):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     logging.info(f"Train set size: {X_train.shape[0]}, Test set size: {X_test.shape[0]}")
     
-    # Create a pipeline that scales the data, applies SMOTE, and then uses a Random Forest classifier
+    # Calculate class distribution
+    class_counts = Counter(y_train)
+    logging.info(f"Class distribution before SMOTE: {class_counts}")
+    
+    # Define sampling strategy
+    sampling_strategy = {
+        'Web Attack Brute Force': int(class_counts['BENIGN'] * 0.1),  # 10% of majority class
+        'Web Attack XSS': int(class_counts['BENIGN'] * 0.1),  # 10% of majority class
+        'Bot': int(class_counts['BENIGN'] * 0.05),  # 5% of majority class
+    }
+    
+    # For other minority classes, oversample to 1% of majority class
+    for class_name, count in class_counts.items():
+        if count < class_counts['BENIGN'] and class_name not in sampling_strategy:
+            sampling_strategy[class_name] = max(count, int(class_counts['BENIGN'] * 0.01))
+    
+    # Remove any classes from sampling_strategy that are not in the dataset
+    sampling_strategy = {k: v for k, v in sampling_strategy.items() if k in class_counts}
+    
+    # Create a pipeline that scales the data, applies aggressive SMOTE, and then uses a Random Forest classifier
     pipeline = ImbPipeline([
-        ('scaler', StandardScaler()),  # Normalize the feature scales
-        ('smote', SMOTE(random_state=42)),  # Oversample minority classes
-        ('classifier', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))  # Random Forest classifier
+        ('scaler', StandardScaler()),
+        ('smote', SMOTE(sampling_strategy=sampling_strategy, random_state=42)),
+        ('classifier', RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1))
     ])
     
-    # Perform cross-validation to estimate model performance
-    logging.info("Performing stratified cross-validation...")
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    
-    # Function to compute the score for a single fold
-    def cv_score(train_index, test_index):
-        X_train_cv, X_test_cv = X.iloc[train_index], X.iloc[test_index]
-        y_train_cv, y_test_cv = y.iloc[train_index], y.iloc[test_index]
-        pipeline.fit(X_train_cv, y_train_cv)
-        return pipeline.score(X_test_cv, y_test_cv)
-
-    # Parallel computation of cross-validation scores
-    cv_scores = Parallel(n_jobs=-1)(delayed(cv_score)(train, test) for train, test in skf.split(X, y))
-    
-    logging.info(f"Cross-validation scores: {cv_scores}")
-    logging.info(f"Mean CV score: {np.mean(cv_scores):.4f} (+/- {np.std(cv_scores) * 2:.4f})")
-    
-    # Train the final model on the entire training set
-    logging.info("Training final model...")
+    # Train the model
+    logging.info("Training model...")
     start_time = time.time()
     pipeline.fit(X_train, y_train)
     end_time = time.time()
     logging.info(f"Training completed in {end_time - start_time:.2f} seconds")
+    
+    # Calculate class distribution after SMOTE
+    y_resampled = pipeline.named_steps['smote'].fit_resample(X_train, y_train)[1]
+    class_counts_after = Counter(y_resampled)
+    logging.info(f"Class distribution after SMOTE: {class_counts_after}")
     
     # Make predictions on the test set
     logging.info("Making predictions on test set...")
@@ -205,6 +231,11 @@ def plot_confusion_matrix(y_test, y_pred, top_n=10):
 # Function to plot feature importance from the Random Forest model
 def plot_feature_importance(pipeline, X):
     importances = pipeline.named_steps['classifier'].feature_importances_
+    
+    # Ensure X is a DataFrame
+    if not isinstance(X, pd.DataFrame):
+        raise ValueError("X must be a pandas DataFrame with named columns")
+    
     feature_importances = pd.Series(importances, index=X.columns).sort_values(ascending=False)
     
     plt.figure(figsize=(12, 10))
@@ -212,9 +243,12 @@ def plot_feature_importance(pipeline, X):
     plt.title('Top 20 Most Important Features')
     plt.xlabel('Features')
     plt.ylabel('Importance')
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig('feature_importance.png')
     plt.close()
+    
+    logging.info("Feature importance plot saved as 'feature_importance.png'")
 
 # Main function to orchestrate the entire process
 def main():
