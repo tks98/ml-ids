@@ -6,3 +6,4 @@ model_cache
 *.pkl
 *.h5
 *.zip
+results/run_*

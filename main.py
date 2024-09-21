@@ -23,6 +23,8 @@ from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers.legacy import Adam
 from tensorflow.keras.layers import LeakyReLU
+import argparse
+import datetime
 
 # Set up logging to track the progress and any issues
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -88,14 +90,79 @@ def load_and_preprocess_data(directory, cache_file='model_cache/full_dataset_cac
     
     return full_dataset
 
+# Function to perform feature engineering and create new features
+def feature_engineering(df):
+    """
+    Create new features from existing features based on domain knowledge of cybersecurity and network events during attacks.
+    """
+    # Strip whitespace from column names
+    df.columns = df.columns.str.strip()
+    
+    # Print available columns
+    print("Available columns:")
+    print(df.columns.tolist())
+
+    # Avoid division by zero
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(0)
+    
+    # Helper function to safely access columns
+    def safe_column(col_name):
+        return df[col_name] if col_name in df.columns else pd.Series(0, index=df.index)
+    
+    # Feature 1: Packet Rate Ratio (Forward Packets per Second / Backward Packets per Second)
+    df['Packet_Rate_Ratio'] = safe_column('Fwd Packets/s') / (safe_column('Bwd Packets/s') + 1e-6)
+    
+    # Feature 2: Byte Rate Ratio (Total Length of Forward Packets / Total Length of Backward Packets)
+    df['Byte_Rate_Ratio'] = safe_column('Total Length of Fwd Packets') / (safe_column('Total Length of Bwd Packets') + 1e-6)
+    
+    # Feature 3: Packet Size Variability (Max Packet Length - Min Packet Length)
+    df['Packet_Size_Variability'] = safe_column('Max Packet Length') - safe_column('Min Packet Length')
+    
+    # Feature 4: Flow Duration per Packet (Flow Duration / Total Packets)
+    df['Flow_Duration_per_Packet'] = safe_column('Flow Duration') / (safe_column('Total Fwd Packets') + safe_column('Total Backward Packets') + 1e-6)
+    
+    # Feature 5: Total Flag Count (Sum of all flag counts)
+    flag_columns = ['FIN Flag Count', 'SYN Flag Count', 'RST Flag Count', 'PSH Flag Count', 
+                    'ACK Flag Count', 'URG Flag Count', 'CWE Flag Count', 'ECE Flag Count']
+    df['Total_Flag_Count'] = sum(safe_column(col) for col in flag_columns)
+    
+    # Feature 6: Header Length Ratio (Forward Header Length / Backward Header Length)
+    df['Header_Length_Ratio'] = safe_column('Fwd Header Length') / (safe_column('Bwd Header Length') + 1e-6)
+    
+    # Feature 7: Active Time Ratio (Active Mean / Idle Mean)
+    df['Active_Idle_Ratio'] = safe_column('Active Mean') / (safe_column('Idle Mean') + 1e-6)
+    
+    # Feature 8: Packet Count Difference (Total Forward Packets - Total Backward Packets)
+    df['Packet_Count_Diff'] = safe_column('Total Fwd Packets') - safe_column('Total Backward Packets')
+    
+    # Feature 9: Percentage of Forward Packets (Total Forward Packets / Total Packets)
+    df['Fwd_Packet_Percentage'] = safe_column('Total Fwd Packets') / (safe_column('Total Fwd Packets') + safe_column('Total Backward Packets') + 1e-6)
+    
+    # Feature 10: Flow Bytes per Packet ((Total Length of Fwd Packets + Total Length of Bwd Packets) / Total Packets)
+    df['Flow_Bytes_per_Packet'] = (safe_column('Total Length of Fwd Packets') + safe_column('Total Length of Bwd Packets')) / (safe_column('Total Fwd Packets') + safe_column('Total Backward Packets') + 1e-6)
+    
+    # Return the dataframe with new features
+    return df
+
 # Function to prepare features (X) and target (y) for machine learning
-def prepare_features_and_target(df, sample_size=0.5, min_samples=10):
-    # Sample a larger subset of the data
+def prepare_features_and_target(df, sample_size=1.0, min_samples=10, use_feature_engineering=True):
+    # Sample the data based on the specified percentage
     df_sampled = df.sample(frac=sample_size, random_state=42)
     
+    # Print column names before feature engineering
+    print("Columns before feature engineering:")
+    print(df_sampled.columns.tolist())
+    
+    # Strip whitespace from column names
+    df_sampled.columns = df_sampled.columns.str.strip()
+    
     # Identify the columns for the label and source file
-    label_col = df_sampled.columns[df_sampled.columns.str.strip() == 'Label'][0]
-    source_file_col = df_sampled.columns[df_sampled.columns.str.strip() == 'source_file'][0]
+    label_col = 'Label'
+    source_file_col = 'source_file'
+    
+    print(f"Label column: '{label_col}'")
+    print(f"Source file column: '{source_file_col}'")
     
     # Clean labels
     df_sampled[label_col] = df_sampled[label_col].str.replace('-', '', regex=False)  # Remove hyphens
@@ -109,6 +176,20 @@ def prepare_features_and_target(df, sample_size=0.5, min_samples=10):
     class_counts = df_sampled[label_col].value_counts()
     classes_to_keep = class_counts[class_counts >= min_samples].index
     df_sampled = df_sampled[df_sampled[label_col].isin(classes_to_keep)]
+    
+    # Perform feature engineering to create new features based on domain knowledge
+    if use_feature_engineering:
+        logging.info("Performing feature engineering...")
+        df_sampled = feature_engineering(df_sampled)
+    else:
+        logging.info("Skipping feature engineering...")
+    
+    # Remove any duplicate columns
+    df_sampled = df_sampled.loc[:, ~df_sampled.columns.duplicated()]
+    
+    # Print column names after feature engineering
+    print("Columns after feature engineering:")
+    print(df_sampled.columns.tolist())
     
     # Separate features (X) and target (y)
     X = df_sampled.drop([label_col, source_file_col], axis=1)
@@ -129,11 +210,10 @@ def prepare_features_and_target(df, sample_size=0.5, min_samples=10):
     return X, y, y_encoded, label_encoder
 
 # Function to train and evaluate the Random Forest model
-def train_and_evaluate_model(X, y, model_cache_file='model_cache/trained_model_cache.joblib'):
+def train_and_evaluate_model(X, y, use_cache=False, model_cache_file='model_cache/trained_model_cache.joblib'):
     logging.info("Starting Random Forest model training and evaluation process...")
     
-    # Check if a cached model exists
-    if os.path.exists(model_cache_file):
+    if use_cache and os.path.exists(model_cache_file):
         logging.info("Loading model from cache...")
         pipeline = joblib.load(model_cache_file)
         
@@ -150,9 +230,9 @@ def train_and_evaluate_model(X, y, model_cache_file='model_cache/trained_model_c
         
         # Define the pipeline
         pipeline = ImbPipeline([
-            ('feature_selection', SelectFromModel(RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))),
             ('scaler', StandardScaler()),
             ('smote', SMOTE(sampling_strategy='auto', random_state=42, n_jobs=-1)),
+            ('feature_selection', SelectFromModel(RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))),
             ('classifier', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'))
         ])
         
@@ -169,7 +249,7 @@ def train_and_evaluate_model(X, y, model_cache_file='model_cache/trained_model_c
         
         # Calculate class distribution after SMOTE
         X_resampled, y_resampled = pipeline.named_steps['smote'].fit_resample(
-            pipeline.named_steps['feature_selection'].transform(X_train),
+            pipeline.named_steps['scaler'].transform(X_train),
             y_train
         )
         class_counts_after = Counter(y_resampled)
@@ -196,19 +276,21 @@ def train_and_evaluate_model(X, y, model_cache_file='model_cache/trained_model_c
     return pipeline, X_test, y_test, y_pred, [accuracy, precision, recall, f1]
 
 # Function to train and evaluate the Isolation Forest model
-def train_and_evaluate_isolation_forest(X, y, model_cache_file='model_cache/isolation_forest_model_cache.joblib'):
+def train_and_evaluate_isolation_forest(X, y, use_cache=False, model_cache_file='model_cache/isolation_forest_model_cache.joblib'):
     logging.info("Starting Isolation Forest training and evaluation process...")
     
-    # Check if a cached model exists
-    if os.path.exists(model_cache_file):
+    # Map labels to 'BENIGN' and 'ATTACK'
+    y_binary = np.where(y == 'BENIGN', 'BENIGN', 'ATTACK')
+    
+    if use_cache and os.path.exists(model_cache_file):
         logging.info("Loading Isolation Forest model from cache...")
         isolation_forest = joblib.load(model_cache_file)
         
         # Split data into training and testing sets
-        _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        _, X_test, _, y_test = train_test_split(X, y_binary, test_size=0.2, random_state=42, stratify=y_binary)
     else:
         # Split data into training and testing sets
-        X_train_full, X_test, y_train_full, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        X_train_full, X_test, y_train_full, y_test = train_test_split(X, y_binary, test_size=0.2, random_state=42, stratify=y_binary)
         
         # From the training data, select only BENIGN samples to train the Isolation Forest
         X_train = X_train_full[y_train_full == 'BENIGN']
@@ -227,7 +309,7 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='model_cache/isol
         # Save the model to cache
         logging.info("Saving Isolation Forest model to cache...")
         joblib.dump(isolation_forest, model_cache_file)
-        
+            
     # Use the trained model to predict anomalies on the test set
     logging.info("Predicting anomalies on test set...")
     y_pred_scores = isolation_forest.decision_function(X_test)
@@ -237,9 +319,6 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='model_cache/isol
     # Isolation Forest outputs 1 for normal, -1 for anomalies
     # Let's map 1 to 'BENIGN', -1 to 'ATTACK'
     y_pred_mapped = np.where(y_pred == 1, 'BENIGN', 'ATTACK')
-    
-    # Map actual labels to 'BENIGN' and 'ATTACK'
-    y_test_mapped = np.where(y_test == 'BENIGN', 'BENIGN', 'ATTACK')
     
     # Create a DataFrame with the results
     results_df = pd.DataFrame({
@@ -258,26 +337,25 @@ def train_and_evaluate_isolation_forest(X, y, model_cache_file='model_cache/isol
     
     # Generate a classification report
     logging.info("Calculating classification report for Isolation Forest...")
-    report = classification_report(y_test_mapped, y_pred_mapped, zero_division=1)
+    report = classification_report(y_test, y_pred_mapped, zero_division=1)
     print("\nIsolation Forest Classification Report:")
     print(report)
     
     logging.info("Isolation Forest evaluation completed.")
     
     # Calculate performance metrics
-    accuracy = accuracy_score(y_test_mapped, y_pred_mapped)
-    precision = precision_score(y_test_mapped, y_pred_mapped, average='weighted', zero_division=1)
-    recall = recall_score(y_test_mapped, y_pred_mapped, average='weighted', zero_division=1)
-    f1 = f1_score(y_test_mapped, y_pred_mapped, average='weighted', zero_division=1)
+    accuracy = accuracy_score(y_test, y_pred_mapped)
+    precision = precision_score(y_test, y_pred_mapped, average='weighted', zero_division=1)
+    recall = recall_score(y_test, y_pred_mapped, average='weighted', zero_division=1)
+    f1 = f1_score(y_test, y_pred_mapped, average='weighted', zero_division=1)
     
-    return isolation_forest, X_test, y_test_mapped, y_pred_mapped, [accuracy, precision, recall, f1]
+    return isolation_forest, X_test, y_test, y_pred_mapped, [accuracy, precision, recall, f1]
 
 # Function to train and evaluate the Neural Network model
-def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_file='model_cache/neural_network_model_cache.h5'):
+def train_and_evaluate_neural_network(X, y_encoded, label_encoder, use_cache=False, model_cache_file='model_cache/neural_network_model_cache.h5'):
     logging.info("Starting Neural Network training and evaluation process...")
     
-    # Check if a cached model exists
-    if os.path.exists(model_cache_file):
+    if use_cache and os.path.exists(model_cache_file):
         logging.info("Loading Neural Network model from cache...")
         model = load_model(model_cache_file)
         
@@ -342,7 +420,7 @@ def train_and_evaluate_neural_network(X, y_encoded, label_encoder, model_cache_f
         # Save the scaler
         with open('model_cache/scaler_nn.pkl', 'wb') as f:
             pickle.dump(scaler, f)
-            
+                
     # Evaluate the model on the test set
     logging.info("Evaluating Neural Network model on test set...")
     # Normalize features
@@ -402,7 +480,7 @@ def plot_confusion_matrix(y_test, y_pred, top_n=10, title='Confusion Matrix', fi
     logging.info(f"{title} saved as '{filename}'")
 
 # Function to plot feature importance from the Random Forest model
-def plot_feature_importance(pipeline, X):
+def plot_feature_importance(pipeline, X, run_dir):
     importances = pipeline.named_steps['classifier'].feature_importances_
     
     # Get the selected feature names from feature selection
@@ -418,13 +496,17 @@ def plot_feature_importance(pipeline, X):
     plt.ylabel('Importance')
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig('results/feature_importance.png')
+    plt.savefig(os.path.join(run_dir, 'feature_importance.png'))
     plt.close()
     
-    logging.info("Feature importance plot saved as 'results/feature_importance.png'")
+    logging.info(f"Feature importance plot saved in {run_dir}")
+    
+    # Save feature importances to a CSV file for further analysis
+    feature_importances.to_csv(os.path.join(run_dir, 'feature_importances.csv'))
+    logging.info(f"Feature importances saved in {run_dir}")
 
 # Function to create an overall performance report
-def create_overall_performance_report(rf_results, if_results, nn_results):
+def create_overall_performance_report(rf_results, if_results, nn_results, run_dir):
     metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
     models = ['Random Forest', 'Isolation Forest', 'Neural Network']
     
@@ -444,51 +526,74 @@ def create_overall_performance_report(rf_results, if_results, nn_results):
     plt.ylabel('Score', fontsize=12)
     plt.ylim(0, 1)
     plt.legend(title='Model', title_fontsize='12', fontsize='10')
-    plt.savefig('results/overall_performance_report.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(run_dir, 'overall_performance_report.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
-    logging.info("Overall performance report saved as 'results/overall_performance_report.png'")
+    logging.info(f"Overall performance report saved in {run_dir}")
+
+# Function to create a unique run directory
+def create_run_directory():
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join('results', f'run_{timestamp}')
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
 
 # Main function to orchestrate the entire process
-def main():
+def main(args):
     try:
         # Create directories if they don't exist
         os.makedirs('model_cache', exist_ok=True)
         os.makedirs('results', exist_ok=True)
+
+        # Create a unique run directory
+        run_dir = create_run_directory()
+        logging.info(f"Created run directory: {run_dir}")
 
         # Specify the directory containing the data files
         directory = 'data/MachineLearningCVE'
         # Load and preprocess the data
         full_dataset = load_and_preprocess_data(directory)
         
+        # Convert the percentage to a fraction
+        sample_size = args.data / 100.0
+        logging.info(f"Using {args.data}% of the dataset (sample size: {sample_size})")
+        
         # Prepare features and target for machine learning
-        X, y, y_encoded, label_encoder = prepare_features_and_target(full_dataset, sample_size=0.5)
+        X, y, y_encoded, label_encoder = prepare_features_and_target(full_dataset, sample_size=sample_size, use_feature_engineering=args.feature_engineering)
         
-        # Train and evaluate the Random Forest model
-        pipeline, X_test_rf, y_test_rf, y_pred_rf, rf_metrics = train_and_evaluate_model(X, y)
+        rf_metrics = if_metrics = nn_metrics = None
+
+        if args.classification or not (args.classification or args.nn):
+            # Train and evaluate the Random Forest model
+            pipeline, X_test_rf, y_test_rf, y_pred_rf, rf_metrics = train_and_evaluate_model(X, y, use_cache=args.use_model_cache)
+            
+            # Generate and save visualizations for Random Forest
+            plot_confusion_matrix(y_test_rf, y_pred_rf, title='Random Forest Confusion Matrix', 
+                                  filename=os.path.join(run_dir, 'confusion_matrix_rf.png'))
+            logging.info(f"Random Forest confusion matrix saved in {run_dir}")
+            
+            plot_feature_importance(pipeline, X, run_dir)
+            
+            # Train and evaluate the Isolation Forest model
+            isolation_forest, X_test_if, y_test_if, y_pred_if, if_metrics = train_and_evaluate_isolation_forest(X, y, use_cache=args.use_model_cache)
+            
+            # Generate and save visualizations for Isolation Forest
+            plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', 
+                                  filename=os.path.join(run_dir, 'confusion_matrix_if.png'))
+            logging.info(f"Isolation Forest confusion matrix saved in {run_dir}")
+
+        if args.nn or not (args.classification or args.nn):
+            # Train and evaluate the Neural Network model
+            model_nn, X_test_nn, y_test_nn, y_pred_nn, nn_metrics = train_and_evaluate_neural_network(X, y_encoded, label_encoder, use_cache=args.use_model_cache)
+            
+            # Generate and save visualizations for Neural Network
+            plot_confusion_matrix(y_test_nn, y_pred_nn, title='Neural Network Confusion Matrix', 
+                                  filename=os.path.join(run_dir, 'confusion_matrix_nn.png'))
+            logging.info(f"Neural Network confusion matrix saved in {run_dir}")
         
-        # Generate and save visualizations for Random Forest
-        plot_confusion_matrix(y_test_rf, y_pred_rf, title='Random Forest Confusion Matrix', filename='results/confusion_matrix_rf.png')
-        logging.info("Random Forest confusion matrix saved as 'results/confusion_matrix_rf.png'")
-        
-        plot_feature_importance(pipeline, X)
-        
-        # Train and evaluate the Isolation Forest model
-        isolation_forest, X_test_if, y_test_if, y_pred_if, if_metrics = train_and_evaluate_isolation_forest(X, y)
-        
-        # Generate and save visualizations for Isolation Forest
-        plot_confusion_matrix(y_test_if, y_pred_if, top_n=2, title='Isolation Forest Confusion Matrix', filename='results/confusion_matrix_if.png')
-        logging.info("Isolation Forest confusion matrix saved as 'results/confusion_matrix_if.png'")
-        
-        # Train and evaluate the Neural Network model
-        model_nn, X_test_nn, y_test_nn, y_pred_nn, nn_metrics = train_and_evaluate_neural_network(X, y_encoded, label_encoder)
-        
-        # Generate and save visualizations for Neural Network
-        plot_confusion_matrix(y_test_nn, y_pred_nn, title='Neural Network Confusion Matrix', filename='results/confusion_matrix_nn.png')
-        logging.info("Neural Network confusion matrix saved as 'results/confusion_matrix_nn.png'")
-        
-        # Create and save the overall performance report
-        create_overall_performance_report(rf_metrics, if_metrics, nn_metrics)
+        # Create and save the overall performance report if we have results from both
+        if rf_metrics and nn_metrics:
+            create_overall_performance_report(rf_metrics, if_metrics, nn_metrics, run_dir)
         
         logging.info("Process completed!")
     
@@ -501,4 +606,19 @@ def main():
 
 # Entry point of the script
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run machine learning models on network traffic data.")
+    parser.add_argument("--classification", action="store_true", help="Run Random Forest and Isolation Forest classifiers")
+    parser.add_argument("--nn", action="store_true", help="Run Neural Network classifier")
+    parser.add_argument("--data", type=float, default=100.0, help="Percentage of dataset to use (default: 100.0)")
+    parser.add_argument("--use-model-cache", action="store_true", help="Use cached models if they exist")
+    parser.add_argument("--feature-engineering", action="store_true", help="Use feature engineering")
+    args = parser.parse_args()
+
+    # If no arguments are provided, run both
+    if not (args.classification or args.nn):
+        args.classification = args.nn = True
+
+    # Ensure the data percentage is between 0 and 100
+    args.data = max(0.0, min(100.0, args.data))
+
+    main(args)
